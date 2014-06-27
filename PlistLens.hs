@@ -1,10 +1,15 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
+import qualified Data.Aeson as Aeson
 import System.Process
 import System.IO
 import Control.Concurrent
 import Data.List
 import qualified Data.ByteString  as BS
+import qualified Data.ByteString.Lazy  as LBS
+import qualified Data.Text as Text
+import Data.Text(Text)
 
 data PlistCommand 
   = Exit
@@ -12,8 +17,6 @@ data PlistCommand
   | Print Entry
   | Set Entry Value
   | Add Entry Type Value
-
-
 
 data Entry = E
 data Type = T
@@ -56,8 +59,65 @@ main = do
      buddy <- plistBuddy ("X.plist")
      txt <- buddy "Help"
      print txt
+{-
      txt <- buddy "Print"
      print txt
+ -}
+     rows <- getRows buddy schema 0
+     rows' <- sequence [ LBS.putStrLn $ Aeson.encode row
+                       | row <- rows
+                       ]
+
      txt <- buddy "Exit"
-     print txt
+
      return ()
+
+data TYPE = STRING | NUMBER | BOOLEAN
+        deriving Show
+-- type 
+data CONV = Mandatory | Optional | Key
+        deriving Show
+
+type SchemaColumn = (Text,[String],TYPE,CONV)
+type Schema = [SchemaColumn]
+
+schema :: Schema
+schema = [("id",["Test","Arr","#","id"],STRING,Key)
+         ,("val",["Test","Arr","#","numberize"],NUMBER,Mandatory)
+         ,("boo",["Test","Arr","#","boo"],BOOLEAN,Mandatory)
+         ]
+
+getRows :: (String -> IO String) -> [SchemaColumn] -> Int -> IO [Aeson.Value]
+getRows buddy schema n = do
+   let f "#" = show n
+       f o   = o
+   row <- getRow buddy [ (iD,fmap f path,ty,conv) | (iD,path,ty,conv) <- schema ]
+   print row
+   if null row
+   then return []
+   else do rows <- getRows buddy schema (n+1)
+           return (Aeson.object row : rows)
+
+getRow :: (String -> IO String) -> [SchemaColumn] -> IO [(Text,Aeson.Value)]
+getRow buddy schema = do
+        res <- sequence [ getEntry buddy col | col <- schema ]
+        return $ concat res
+
+getEntry :: (String -> IO String) -> SchemaColumn -> IO [(Text,Aeson.Value)]
+getEntry buddy (nm,path,ty,conv) = do
+        res <- buddy $ "Print " ++ concat (intersperse "::" path)
+        let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
+        print res
+        print txt
+        if "Print: Entry," `isPrefixOf` txt && "Does Not Exist" `isSuffixOf` txt
+        then return []
+        else return [(nm, case ty of
+                        STRING -> Aeson.String (Text.pack txt)
+                        NUMBER -> Aeson.Number (read txt)
+                        BOOLEAN | "true" `isInfixOf` txt -> Aeson.Bool True
+                        BOOLEAN | "false" `isInfixOf` txt -> Aeson.Bool False
+                        BOOLEAN -> error $ "bad BOOLEAN: " ++ show txt
+                     )]
+
+--match STRING 
+
