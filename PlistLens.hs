@@ -34,25 +34,23 @@ plistBuddy fileName = do
     hSetBuffering hout NoBuffering
     hSetBinaryMode hout True
   
-    let prompt = "Command: "
+    let prompt = "\nCommand: "
 
-    let untilPrompt xs | reverse prompt `isPrefixOf` xs = return (reverse $ drop (length prompt) $ xs)
+    let untilPrompt cs | reverse prompt `isPrefixOf` cs = return (reverse $ drop (length prompt) $ cs)
                        | otherwise = do
          eof <- hIsEOF hout
---         print "X"
---         print eof
---         print "X"
-    	 c <- hGetChar hout
---         print "X"
---	 print c
-	 untilPrompt (c : xs)
+         if eof 
+         then return (reverse cs)
+         else do 
+            c <- hGetChar hout
+   	    untilPrompt (c : cs)
 
     -- Wait for first prompt 
-    _ <- untilPrompt ""
+    _ <- untilPrompt "\n"
 
     return $ \ input -> do
           hPutStrLn hin input  -- send command
-          untilPrompt ""   -- wait for output
+          untilPrompt "\n"   -- wait for output
 
 main = do
      buddy <- plistBuddy ("X.plist")
