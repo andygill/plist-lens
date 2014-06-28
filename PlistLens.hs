@@ -42,7 +42,7 @@ main_get s@(Schema schema prefix) plistFile = do
   buddy <- plistBuddy plistFile
   -- now, we are going to look for the rows
   let loop n = do
-        row <- getRow buddy [ col { path = prefix ++ [show n] ++ path col} | col <- schema ]         
+        row <- getRow buddy [ col { path = fullPath prefix n $ path col } | col <- schema ]         
         if null row
         then return ()
         else do LBS.hPut stdout (Aeson.encode (Aeson.object row) <> "\n") 
@@ -56,9 +56,8 @@ main_put s@(Schema cols prefix) plistFile = do
   buddy <- plistBuddy plistFile
   -- now, we are going to look for the row mapping
   let loop n = do
-        row <- getRow buddy [ col { path = prefix ++ [show n] ++ path col} | col <- cols, conv col == Key ]
-        let iD = head [ name col | col <- cols ]
-        case lookup iD row of
+        opt_val <- getEntry buddy (head [ fullPath prefix n $ path col | col <- cols, conv col == Key ]) STRING
+        case opt_val of
           Just (String v) -> do
                 xs <- loop (n+1)
                 return $ (v,n) : xs
@@ -76,6 +75,10 @@ main_put s@(Schema cols prefix) plistFile = do
   return ()
 
 ------------------------------------------------------------------------------
+
+fullPath :: [String] -> Int -> [String] -> [String]
+fullPath prefix n rest = prefix ++ [show n] ++ rest 
+
 
 ------------------------------------------------------------------------------
 
@@ -185,24 +188,26 @@ insertRow buddy s iD row = do
 
 getRow :: (String -> IO String) -> [SchemaColumn] -> IO [(Text,Aeson.Value)]
 getRow buddy schema = do
-        res <- sequence [ getEntry buddy col | col <- schema ]
+        res <- sequence [ do opt_v <- getEntry buddy (path col) (ty col)
+                             case opt_v of
+                                    Nothing -> return []
+                                    Just v -> return [(name col,v)]
+                        | col <- schema ]
         return $ concat res
 
-
-getEntry :: (String -> IO String) -> SchemaColumn -> IO [(Text,Aeson.Value)]
-getEntry buddy (SchemaColumn nm path ty conv _) = do
-        res <- buddy $ "Print " ++ concat (intersperse "::" $ fmap (\ xs -> "'" ++ xs ++ "'") $ path)
+getEntry :: (String -> IO String) -> [String] -> TYPE -> IO (Maybe Aeson.Value)
+getEntry buddy ps ty = do
+        res <- buddy $ "Print " ++ concat (intersperse "::" $ fmap (\ xs -> "'" ++ xs ++ "'") $ ps)
         let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
 --        print (res,txt)
         if "Print: Entry," `isPrefixOf` txt && "Does Not Exist" `isSuffixOf` txt
-        then return []
-        else return [(nm, case ty of
+        then return Nothing
+        else return  $ Just $ case ty of
                         STRING -> Aeson.String (Text.pack txt)
                         NUMBER -> Aeson.Number (read txt)
                         BOOLEAN | "true" `isInfixOf` txt -> Aeson.Bool True
                         BOOLEAN | "false" `isInfixOf` txt -> Aeson.Bool False
                         BOOLEAN -> error $ "bad BOOLEAN: " ++ show txt
-                     )]
 
 --match STRING 
 
