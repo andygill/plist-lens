@@ -1,8 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
+import Control.Applicative
 import qualified Data.Aeson as Aeson
+import Data.Aeson((.:), Value(..))
 import System.Process
+import System.Environment
 import System.IO
 import Control.Concurrent
 import Data.List
@@ -10,17 +13,70 @@ import qualified Data.ByteString  as BS
 import qualified Data.ByteString.Lazy  as LBS
 import qualified Data.Text as Text
 import Data.Text(Text)
+import Web.Scotty.CRUD.JSON
+import Web.Scotty.CRUD.Types hiding (getRow)
+--import qualified Data.Vector as V
 
-data PlistCommand 
-  = Exit
-  | Save
-  | Print Entry
-  | Set Entry Value
-  | Add Entry Type Value
+main :: IO ()
+main = getArgs >>= main2
 
-data Entry = E
-data Type = T
-data Value = V
+main2 :: [String] -> IO ()
+main2 [schemaFile,"get",plistFile] = do 
+  schemaText <- LBS.readFile schemaFile
+  case Aeson.eitherDecode schemaText of
+    Left msg -> error $"can not read schema: " ++ msg
+    Right js -> main_get js plistFile
+  return ()
+main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
+
+------------------------------------------------------------------------------
+
+main_get :: [SchemaColumn] -> FilePath -> IO ()
+main_get ss plistFile = do 
+  buddy <- plistBuddy plistFile
+  txt <- buddy "Help"
+  -- now, we are going to look for the rows
+  res <- getRows buddy ss 0 
+  print res
+  buddy "Exit"
+  return ()
+
+------------------------------------------------------------------------------
+
+------------------------------------------------------------------------------
+
+data TYPE = STRING | NUMBER | BOOLEAN
+        deriving Show
+data CONV = RO | RW | Key
+        deriving Show
+data SchemaColumn = SchemaColumn Text [String] TYPE CONV
+        deriving Show
+type Schema = [SchemaColumn]
+
+instance Aeson.FromJSON CONV where
+  parseJSON (String "key") = return Key
+  parseJSON (String "ro") = return RO
+  parseJSON (String "rw") = return RW
+  parseJSON _ = fail "do not understand conv (expecting key, ro, rw)"
+
+instance Aeson.FromJSON TYPE where
+  parseJSON (String "string") = return STRING
+  parseJSON (String "number") = return NUMBER
+  parseJSON (String "boolean") = return BOOLEAN
+  parseJSON _ = fail "do not understand type"
+
+instance Aeson.FromJSON SchemaColumn where
+  parseJSON (Object o) = SchemaColumn
+                <$> o .: "field"
+                <*> o .: "path"
+                <*> o .: "type"
+                <*> o .: "conv"
+  parseJSON _ = fail "not object"
+
+------------------------------------------------------------------------------
+
+
+
 
 plistBuddy :: FilePath -> IO (String -> IO String)
 plistBuddy fileName = do
@@ -55,44 +111,12 @@ plistBuddy fileName = do
           hPutStrLn hin input  -- send command
           untilPrompt "\n"   -- wait for output
 
-main = do
-     buddy <- plistBuddy ("X.plist")
-     txt <- buddy "Help"
-     print txt
-{-
-     txt <- buddy "Print"
-     print txt
- -}
-     rows <- getRows buddy schema 0
-     rows' <- sequence [ LBS.putStrLn $ Aeson.encode row
-                       | row <- rows
-                       ]
-
-     txt <- buddy "Exit"
-
-     return ()
-
-data TYPE = STRING | NUMBER | BOOLEAN
-        deriving Show
--- type 
-data CONV = Mandatory | Optional | Key
-        deriving Show
-
-type SchemaColumn = (Text,[String],TYPE,CONV)
-type Schema = [SchemaColumn]
-
-schema :: Schema
-schema = [("id",["Test","Arr","#","id"],STRING,Key)
-         ,("val",["Test","Arr","#","numberize"],NUMBER,Mandatory)
-         ,("boo",["Test","Arr","#","boo"],BOOLEAN,Mandatory)
-         ]
-
 getRows :: (String -> IO String) -> [SchemaColumn] -> Int -> IO [Aeson.Value]
 getRows buddy schema n = do
    let f "#" = show n
        f o   = o
-   row <- getRow buddy [ (iD,fmap f path,ty,conv) | (iD,path,ty,conv) <- schema ]
-   print row
+   row <- getRow buddy [ (SchemaColumn iD (fmap f path) ty conv) | (SchemaColumn iD path ty conv) <- schema ]
+--   print row
    if null row
    then return []
    else do rows <- getRows buddy schema (n+1)
@@ -103,12 +127,12 @@ getRow buddy schema = do
         res <- sequence [ getEntry buddy col | col <- schema ]
         return $ concat res
 
+
 getEntry :: (String -> IO String) -> SchemaColumn -> IO [(Text,Aeson.Value)]
-getEntry buddy (nm,path,ty,conv) = do
+getEntry buddy (SchemaColumn nm path ty conv) = do
         res <- buddy $ "Print " ++ concat (intersperse "::" path)
         let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
-        print res
-        print txt
+--        print (res,txt)
         if "Print: Entry," `isPrefixOf` txt && "Does Not Exist" `isSuffixOf` txt
         then return []
         else return [(nm, case ty of
