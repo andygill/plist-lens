@@ -130,7 +130,7 @@ getRow buddy schema = do
 
 getEntry :: (String -> IO String) -> SchemaColumn -> IO [(Text,Aeson.Value)]
 getEntry buddy (SchemaColumn nm path ty conv) = do
-        res <- buddy $ "Print " ++ concat (intersperse "::" path)
+        res <- buddy $ "Print " ++ concat (intersperse "::" $ fmap (\ xs -> "'" ++ xs ++ "'") $ path)
         let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
 --        print (res,txt)
         if "Print: Entry," `isPrefixOf` txt && "Does Not Exist" `isSuffixOf` txt
