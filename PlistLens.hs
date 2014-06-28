@@ -3,7 +3,7 @@ module Main where
 
 import Control.Applicative
 import qualified Data.Aeson as Aeson
-import Data.Aeson((.:), Value(..))
+import Data.Aeson((.:), (.:?), Value(..))
 import System.Process
 import System.Environment
 import System.IO
@@ -37,11 +37,12 @@ main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
 ------------------------------------------------------------------------------
 
 main_get :: Schema -> FilePath -> IO ()
-main_get s@(Schema schema prefix _) plistFile = do 
+main_get s@(Schema schema prefix) plistFile = do 
+  print s
   buddy <- plistBuddy plistFile
   -- now, we are going to look for the rows
   let loop n = do
-        row <- getRow buddy [ (SchemaColumn iD (prefix ++ [show n] ++ path) ty conv) | (SchemaColumn iD path ty conv) <- schema ]         
+        row <- getRow buddy [ col { path = prefix ++ [show n] ++ path col} | col <- schema ]         
         if null row
         then return ()
         else do LBS.hPut stdout (Aeson.encode (Aeson.object row) <> "\n") 
@@ -51,12 +52,12 @@ main_get s@(Schema schema prefix _) plistFile = do
   return ()
 
 main_put :: Schema -> FilePath -> IO ()
-main_put s@(Schema schema prefix _) plistFile = do 
+main_put s@(Schema cols prefix) plistFile = do 
   buddy <- plistBuddy plistFile
   -- now, we are going to look for the row mapping
   let loop n = do
-        row <- getRow buddy [ (SchemaColumn iD (prefix ++ [show n] ++ path) ty Key) | (SchemaColumn iD path ty Key) <- schema ]         
-        let iD = head [ iD | (SchemaColumn iD path ty Key) <- schema ]
+        row <- getRow buddy [ col { path = prefix ++ [show n] ++ path col} | col <- cols, conv col == Key ]
+        let iD = head [ name col | col <- cols ]
         case lookup iD row of
           Just (String v) -> do
                 xs <- loop (n+1)
@@ -66,10 +67,11 @@ main_put s@(Schema schema prefix _) plistFile = do
   let db = HashMap.fromList xs
   print db
   tab :: Table Row <- readTable stdin
-  sequence [ insertRow buddy s row_id row
+  sequence [ case HashMap.lookup row_id db of
+               Just row_num -> insertRow buddy s row_num row
+               Nothing      -> putStrLn $ "## bad id : " ++ show row_id
            | (row_id,row) <- HashMap.toList tab
            ]
-  print tab
   buddy "Exit"
   return ()
 
@@ -78,16 +80,17 @@ main_put s@(Schema schema prefix _) plistFile = do
 ------------------------------------------------------------------------------
 
 data TYPE = STRING | NUMBER | BOOLEAN
-        deriving Show
+        deriving (Show,Eq,Ord)
 data CONV = RO | RW | Key
-        deriving Show
-data SchemaColumn = SchemaColumn Text [String] TYPE CONV
+        deriving (Show,Eq,Ord)
+data SchemaColumn = SchemaColumn { name :: Text, path :: [String], ty :: TYPE, conv :: CONV, put :: Maybe String }
         deriving Show
 
-data Schema = Schema { schema :: [SchemaColumn], prefix :: [String], assert :: [Assert] }
+data Schema = Schema { schema :: [SchemaColumn], prefix :: [String] }
         deriving Show
         
-data Assert = Assert [String] Assign
+{-
+        data Assert = Assert [String] Assign
         deriving Show
 
 data Assign = Assign String String TYPE
@@ -104,13 +107,12 @@ instance Aeson.FromJSON Assign where
                           [(nm,String txt)] -> return (Assign (Text.unpack nm) (Text.unpack txt) STRING)
                           _ -> fail "not well formed object"
   parseJSON _ = fail "not object"
-
+-}
 
 instance Aeson.FromJSON Schema where
   parseJSON (Object o) = Schema
                 <$> o .: "schema"
                 <*> o .: "prefix"
-                <*> o .: "assert"                
   parseJSON _ = fail "not object"
 
 instance Aeson.FromJSON CONV where
@@ -131,12 +133,10 @@ instance Aeson.FromJSON SchemaColumn where
                 <*> o .: "path"
                 <*> o .: "type"
                 <*> o .: "conv"
+                <*> o .:? "put"
   parseJSON _ = fail "not object"
 
 ------------------------------------------------------------------------------
-
-
-
 
 plistBuddy :: FilePath -> IO (String -> IO String)
 plistBuddy fileName = do
@@ -174,8 +174,12 @@ plistBuddy fileName = do
 -------
 
 
-insertRow :: (String -> IO String) -> Schema -> Id -> Row -> IO ()
-insertRow buddy s iD row = return ()
+insertRow :: (String -> IO String) -> Schema -> Int -> Row -> IO ()
+insertRow buddy s iD row = do
+        -- Now, go over each of the 
+
+        print (s,iD,row)
+        return ()
 
 --
 
@@ -186,7 +190,7 @@ getRow buddy schema = do
 
 
 getEntry :: (String -> IO String) -> SchemaColumn -> IO [(Text,Aeson.Value)]
-getEntry buddy (SchemaColumn nm path ty conv) = do
+getEntry buddy (SchemaColumn nm path ty conv _) = do
         res <- buddy $ "Print " ++ concat (intersperse "::" $ fmap (\ xs -> "'" ++ xs ++ "'") $ path)
         let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
 --        print (res,txt)
