@@ -16,6 +16,7 @@ import Data.Text(Text)
 import Web.Scotty.CRUD.JSON
 import Web.Scotty.CRUD.Types hiding (getRow)
 import Data.Monoid
+import qualified Data.HashMap.Strict as HashMap
 --import qualified Data.Vector as V
 
 main :: IO ()
@@ -33,7 +34,8 @@ main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
 ------------------------------------------------------------------------------
 
 main_get :: Schema -> FilePath -> IO ()
-main_get (Schema schema prefix) plistFile = do 
+main_get s@(Schema schema prefix _) plistFile = do 
+  print s
   buddy <- plistBuddy plistFile
   txt <- buddy "Help"
   -- now, we are going to look for the rows
@@ -58,12 +60,33 @@ data CONV = RO | RW | Key
 data SchemaColumn = SchemaColumn Text [String] TYPE CONV
         deriving Show
 
-data Schema = Schema { schema :: [SchemaColumn], prefix :: [String] }
+data Schema = Schema { schema :: [SchemaColumn], prefix :: [String], assert :: [Assert] }
+        deriving Show
+        
+data Assert = Assert [String] Assign
+        deriving Show
+
+data Assign = Assign String String TYPE
+        deriving Show
+
+instance Aeson.FromJSON Assert where
+  parseJSON (Object o) = Assert
+                <$> o .: "if"
+                <*> o .: "then"
+  parseJSON _ = fail "not object"        
+
+instance Aeson.FromJSON Assign where
+  parseJSON (Object o) = case HashMap.toList o of
+                          [(nm,String txt)] -> return (Assign (Text.unpack nm) (Text.unpack txt) STRING)
+                          _ -> fail "not well formed object"
+  parseJSON _ = fail "not object"
+
 
 instance Aeson.FromJSON Schema where
   parseJSON (Object o) = Schema
                 <$> o .: "schema"
                 <*> o .: "prefix"
+                <*> o .: "assert"                
   parseJSON _ = fail "not object"
 
 instance Aeson.FromJSON CONV where

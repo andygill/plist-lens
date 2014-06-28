@@ -1,5 +1,6 @@
 { "schema":
    [{"field":"id",		"path":["id"],		"type":"string",	"conv":"key"}
    ],
-  "prefix":["Test","Arr"]
+  "prefix":["Test","Arr"],
+  "assert":[]
 } 
