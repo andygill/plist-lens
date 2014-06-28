@@ -37,8 +37,13 @@ main_get (Schema schema prefix) plistFile = do
   buddy <- plistBuddy plistFile
   txt <- buddy "Help"
   -- now, we are going to look for the rows
-  ss <- getRows buddy schema 0 
-  sequence_ [ LBS.hPut stdout (Aeson.encode s <> "\n") | s <- ss ]
+  let loop n = do
+        row <- getRow buddy [ (SchemaColumn iD (prefix ++ [show n] ++ path) ty conv) | (SchemaColumn iD path ty conv) <- schema ]         
+        if null row
+        then return ()
+        else do LBS.hPut stdout (Aeson.encode (Aeson.object row) <> "\n") 
+                loop (n+1)
+  loop 0          
   buddy "Exit"
   return ()
 
@@ -53,7 +58,7 @@ data CONV = RO | RW | Key
 data SchemaColumn = SchemaColumn Text [String] TYPE CONV
         deriving Show
 
-data Schema = Schema { schema :: [SchemaColumn], prefix :: [Text] }
+data Schema = Schema { schema :: [SchemaColumn], prefix :: [String] }
 
 instance Aeson.FromJSON Schema where
   parseJSON (Object o) = Schema
