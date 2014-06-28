@@ -15,6 +15,7 @@ import qualified Data.Text as Text
 import Data.Text(Text)
 import Web.Scotty.CRUD.JSON
 import Web.Scotty.CRUD.Types hiding (getRow)
+import Data.Monoid
 --import qualified Data.Vector as V
 
 main :: IO ()
@@ -36,8 +37,8 @@ main_get ss plistFile = do
   buddy <- plistBuddy plistFile
   txt <- buddy "Help"
   -- now, we are going to look for the rows
-  res <- getRows buddy ss 0 
-  print res
+  ss <- getRows buddy ss 0 
+  sequence_ [ LBS.hPut stdout (Aeson.encode s <> "\n") | s <- ss ]
   buddy "Exit"
   return ()
 
