@@ -13,6 +13,7 @@ import qualified Data.ByteString  as BS
 import qualified Data.ByteString.Lazy  as LBS
 import qualified Data.Text as Text
 import Data.Text(Text)
+import Data.Char
 import Web.Scotty.CRUD.JSON
 import Web.Scotty.CRUD.Types hiding (getRow)
 import Data.Monoid
@@ -38,7 +39,7 @@ main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
 
 main_get :: Schema -> FilePath -> IO ()
 main_get s@(Schema schema prefix) plistFile = do 
-  print s
+--  print s
   buddy <- plistBuddy plistFile
   -- now, we are going to look for the rows
   let loop n = do
@@ -64,26 +65,34 @@ main_put s@(Schema cols prefix) plistFile = do
           _ -> return []
   xs <- loop 0          
   let db = HashMap.fromList xs
-  print db
+--  print db
   tab :: Table Row <- readTable stdin
   sequence [ case HashMap.lookup row_id db of
                Just row_num -> insertRow buddy s row_num row
                Nothing      -> putStrLn $ "## bad id : " ++ show row_id
            | (row_id,row) <- HashMap.toList tab
            ]
+--  assignEntry buddy ["0","hack"] (Aeson.Number 99) INTEGER Nothing
+--  assignEntry buddy ["0","hack"] (Aeson.Number 99) INTEGER Nothing
+--  assignEntry buddy ["0","Children","1","Children","0","Children","0","'User Settings'","Tags","artist","Value"] (Aeson.String "Hello") STRING (Just "Tag")
+  buddy "Save"
   buddy "Exit"
   return ()
 
 ------------------------------------------------------------------------------
 
 fullPath :: [String] -> Int -> [String] -> [String]
-fullPath prefix n rest = prefix ++ [show n] ++ rest 
-
+fullPath prefix n rest = fmap (\ xs -> "'" ++ xs ++ "'") $ prefix ++ [show n] ++ rest 
 
 ------------------------------------------------------------------------------
 
-data TYPE = STRING | NUMBER | BOOLEAN
+data TYPE = STRING | INTEGER | BOOLEAN
         deriving (Show,Eq,Ord)
+
+showT STRING  = "string"
+showT INTEGER = "integer"
+showT BOOLEAN = "bool"
+
 data CONV = RO | RW | Key
         deriving (Show,Eq,Ord)
 data SchemaColumn = SchemaColumn { name :: Text, path :: [String], ty :: TYPE, conv :: CONV, put :: Maybe String }
@@ -126,8 +135,8 @@ instance Aeson.FromJSON CONV where
 
 instance Aeson.FromJSON TYPE where
   parseJSON (String "string") = return STRING
-  parseJSON (String "number") = return NUMBER
-  parseJSON (String "boolean") = return BOOLEAN
+  parseJSON (String "integer") = return INTEGER
+  parseJSON (String "bool") = return BOOLEAN
   parseJSON _ = fail "do not understand type"
 
 instance Aeson.FromJSON SchemaColumn where
@@ -180,8 +189,10 @@ plistBuddy fileName = do
 insertRow :: (String -> IO String) -> Schema -> Int -> Row -> IO ()
 insertRow buddy s iD row = do
         -- Now, go over each of the 
-
-        print (s,iD,row)
+        sequence [ print (col,iD,row)
+                 | col <- schema s
+                 , conv col == RW
+                 ]
         return ()
 
 --
@@ -197,17 +208,54 @@ getRow buddy schema = do
 
 getEntry :: (String -> IO String) -> [String] -> TYPE -> IO (Maybe Aeson.Value)
 getEntry buddy ps ty = do
-        res <- buddy $ "Print " ++ concat (intersperse "::" $ fmap (\ xs -> "'" ++ xs ++ "'") $ ps)
+        res <- buddy $ "Print " ++ concat (intersperse "::" ps)
         let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
 --        print (res,txt)
         if "Print: Entry," `isPrefixOf` txt && "Does Not Exist" `isSuffixOf` txt
         then return Nothing
         else return  $ Just $ case ty of
                         STRING -> Aeson.String (Text.pack txt)
-                        NUMBER -> Aeson.Number (read txt)
+                        INTEGER -> Aeson.Number (read txt)
                         BOOLEAN | "true" `isInfixOf` txt -> Aeson.Bool True
                         BOOLEAN | "false" `isInfixOf` txt -> Aeson.Bool False
                         BOOLEAN -> error $ "bad BOOLEAN: " ++ show txt
 
---match STRING 
+-- Returns True on success, False on failure
+setEntry :: (String -> IO String) -> [String] -> Aeson.Value -> TYPE -> IO Bool
+setEntry buddy ps val ty = do
+        res <- buddy $ "Set " ++ concat (intersperse "::" ps) ++ " " ++ showV val
+        let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
+        print (res,txt)
+        return $ null txt 
 
+-- Returns True on success, False on failure
+addEntry :: (String -> IO String) -> [String] -> Aeson.Value -> TYPE -> IO Bool
+addEntry buddy ps val ty = do
+        print ps
+        res <- buddy $ "Add " ++ concat (intersperse "::" ps) ++ " " ++ showT ty ++ " " ++ showV val
+        let txt = concat $ intersperse "\n" $ drop 2 $ lines $ filter (/= '\r') $ res
+        print (res,txt)
+        return $ null txt 
+
+-- Returns True on success, False on failure. Tries both set and add. Should work.
+-- The final argument is a special flag for special updates.
+assignEntry :: (String -> IO String) -> [String] -> Aeson.Value -> TYPE -> Maybe String -> IO Bool
+assignEntry buddy ps val ty Nothing = do
+        ok <- setEntry buddy ps val ty
+        if ok 
+        then return ok 
+        else addEntry buddy ps val ty
+assignEntry buddy ps val ty (Just "Tag") = do
+        ok <- setEntry buddy ps val ty
+        if ok   -- In this case, the dictionary was already there
+        then return ok 
+        else do -- The dict was not there, so makes sure we also have the tagName
+                addEntry buddy ps val ty
+                let tagName = let (c:cs) = last (init ps) in toUpper c : cs
+                addEntry buddy (init ps ++ ["Tag"]) (Aeson.String $ Text.pack tagName) STRING
+
+showV :: Aeson.Value -> String
+showV (Aeson.String txt) = show txt
+showV (Aeson.Number x)   = show x
+showV (Aeson.Bool True)  = "true"
+showV (Aeson.Bool False) = "false"
