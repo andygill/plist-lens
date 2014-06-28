@@ -101,26 +101,6 @@ data SchemaColumn = SchemaColumn { name :: Text, path :: [String], ty :: TYPE, c
 data Schema = Schema { schema :: [SchemaColumn], prefix :: [String] }
         deriving Show
         
-{-
-        data Assert = Assert [String] Assign
-        deriving Show
-
-data Assign = Assign String String TYPE
-        deriving Show
-
-instance Aeson.FromJSON Assert where
-  parseJSON (Object o) = Assert
-                <$> o .: "if"
-                <*> o .: "then"
-  parseJSON _ = fail "not object"        
-
-instance Aeson.FromJSON Assign where
-  parseJSON (Object o) = case HashMap.toList o of
-                          [(nm,String txt)] -> return (Assign (Text.unpack nm) (Text.unpack txt) STRING)
-                          _ -> fail "not well formed object"
-  parseJSON _ = fail "not object"
--}
-
 instance Aeson.FromJSON Schema where
   parseJSON (Object o) = Schema
                 <$> o .: "schema"
@@ -187,9 +167,15 @@ plistBuddy fileName = do
 
 
 insertRow :: (String -> IO String) -> Schema -> Int -> Row -> IO ()
-insertRow buddy s iD row = do
+insertRow buddy s n row = do
         -- Now, go over each of the 
-        sequence [ print (col,iD,row)
+        sequence [ case HashMap.lookup (name col) row of
+                     Nothing -> return () -- no update included
+                     Just val -> do
+                             b <- assignEntry buddy (fullPath (prefix s) n (path col)) val (ty col) (put col)
+                             if b 
+                             then return ()
+                             else print $ "failed to write " ++ show (row,val)
                  | col <- schema s
                  , conv col == RW
                  ]
@@ -251,7 +237,8 @@ assignEntry buddy ps val ty (Just "Tag") = do
         then return ok 
         else do -- The dict was not there, so makes sure we also have the tagName
                 addEntry buddy ps val ty
-                let tagName = let (c:cs) = last (init ps) in toUpper c : cs
+                let tagName = let (c1:c2:cs) = last (init ps) in c1 : toUpper c2 : cs
+                print ("##",tagName)
                 addEntry buddy (init ps ++ ["Tag"]) (Aeson.String $ Text.pack tagName) STRING
 
 showV :: Aeson.Value -> String
