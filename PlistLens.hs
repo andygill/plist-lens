@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, ScopedTypeVariables #-}
 module Main where
 
 import Control.Applicative
@@ -23,11 +23,14 @@ main :: IO ()
 main = getArgs >>= main2
 
 main2 :: [String] -> IO ()
-main2 [schemaFile,"get",plistFile] = do 
+main2 [schemaFile,cmd,plistFile] = do 
   schemaText <- LBS.readFile schemaFile
   case Aeson.eitherDecode schemaText of
     Left msg -> error $"can not read schema: " ++ msg
-    Right js -> main_get js plistFile
+    Right js -> case cmd of
+                  "put" -> main_put js plistFile
+                  "get" -> main_get js plistFile
+                  _     -> main2 []
   return ()
 main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
 
@@ -35,9 +38,7 @@ main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
 
 main_get :: Schema -> FilePath -> IO ()
 main_get s@(Schema schema prefix _) plistFile = do 
-  print s
   buddy <- plistBuddy plistFile
-  txt <- buddy "Help"
   -- now, we are going to look for the rows
   let loop n = do
         row <- getRow buddy [ (SchemaColumn iD (prefix ++ [show n] ++ path) ty conv) | (SchemaColumn iD path ty conv) <- schema ]         
@@ -46,6 +47,29 @@ main_get s@(Schema schema prefix _) plistFile = do
         else do LBS.hPut stdout (Aeson.encode (Aeson.object row) <> "\n") 
                 loop (n+1)
   loop 0          
+  buddy "Exit"
+  return ()
+
+main_put :: Schema -> FilePath -> IO ()
+main_put s@(Schema schema prefix _) plistFile = do 
+  buddy <- plistBuddy plistFile
+  -- now, we are going to look for the row mapping
+  let loop n = do
+        row <- getRow buddy [ (SchemaColumn iD (prefix ++ [show n] ++ path) ty Key) | (SchemaColumn iD path ty Key) <- schema ]         
+        let iD = head [ iD | (SchemaColumn iD path ty Key) <- schema ]
+        case lookup iD row of
+          Just (String v) -> do
+                xs <- loop (n+1)
+                return $ (v,n) : xs
+          _ -> return []
+  xs <- loop 0          
+  let db = HashMap.fromList xs
+  print db
+  tab :: Table Row <- readTable stdin
+  sequence [ insertRow buddy s row_id row
+           | (row_id,row) <- HashMap.toList tab
+           ]
+  print tab
   buddy "Exit"
   return ()
 
@@ -147,16 +171,13 @@ plistBuddy fileName = do
           hPutStrLn hin input  -- send command
           untilPrompt "\n"   -- wait for output
 
-getRows :: (String -> IO String) -> [SchemaColumn] -> Int -> IO [Aeson.Value]
-getRows buddy schema n = do
-   let f "#" = show n
-       f o   = o
-   row <- getRow buddy [ (SchemaColumn iD (fmap f path) ty conv) | (SchemaColumn iD path ty conv) <- schema ]
---   print row
-   if null row
-   then return []
-   else do rows <- getRows buddy schema (n+1)
-           return (Aeson.object row : rows)
+-------
+
+
+insertRow :: (String -> IO String) -> Schema -> Id -> Row -> IO ()
+insertRow buddy s iD row = return ()
+
+--
 
 getRow :: (String -> IO String) -> [SchemaColumn] -> IO [(Text,Aeson.Value)]
 getRow buddy schema = do
