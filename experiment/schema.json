@@ -1,2 +1,5 @@
-[{"field":"id",		"path":["Test","Arr","#","id"],		"type":"string",	"conv":"key"}
-]
+{ "schema":
+   [{"field":"id",		"path":["Test","Arr","#","id"],		"type":"string",	"conv":"key"}
+   ],
+  "prefix":[]
+} 

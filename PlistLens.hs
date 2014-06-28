@@ -32,12 +32,12 @@ main2 _ = putStrLn "usage: plist-lens <schema.json> [put|get] <db.plist>"
 
 ------------------------------------------------------------------------------
 
-main_get :: [SchemaColumn] -> FilePath -> IO ()
-main_get ss plistFile = do 
+main_get :: Schema -> FilePath -> IO ()
+main_get (Schema schema prefix) plistFile = do 
   buddy <- plistBuddy plistFile
   txt <- buddy "Help"
   -- now, we are going to look for the rows
-  ss <- getRows buddy ss 0 
+  ss <- getRows buddy schema 0 
   sequence_ [ LBS.hPut stdout (Aeson.encode s <> "\n") | s <- ss ]
   buddy "Exit"
   return ()
@@ -52,7 +52,14 @@ data CONV = RO | RW | Key
         deriving Show
 data SchemaColumn = SchemaColumn Text [String] TYPE CONV
         deriving Show
-type Schema = [SchemaColumn]
+
+data Schema = Schema { schema :: [SchemaColumn], prefix :: [Text] }
+
+instance Aeson.FromJSON Schema where
+  parseJSON (Object o) = Schema
+                <$> o .: "schema"
+                <*> o .: "prefix"
+  parseJSON _ = fail "not object"
 
 instance Aeson.FromJSON CONV where
   parseJSON (String "key") = return Key
