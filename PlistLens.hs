@@ -17,6 +17,7 @@ import Data.Char
 import Web.Scotty.CRUD.JSON
 import Web.Scotty.CRUD.Types hiding (getRow)
 import Data.Monoid
+import Control.Monad
 import qualified Data.HashMap.Strict as HashMap
 --import qualified Data.Vector as V
 
@@ -57,6 +58,7 @@ main_put s@(Schema cols prefix) plistFile = do
   buddy <- plistBuddy plistFile
   -- now, we are going to look for the row mapping
   let loop n = do
+        print ("loop",n)
         opt_val <- getEntry buddy (head [ fullPath prefix n $ path col | col <- cols, conv col == Key ]) STRING
         case opt_val of
           Just (String v) -> do
@@ -65,16 +67,22 @@ main_put s@(Schema cols prefix) plistFile = do
           _ -> return []
   xs <- loop 0          
   let db = HashMap.fromList xs
---  print db
+  print db
   tab :: Table Row <- readTable stdin
-  sequence [ case HashMap.lookup row_id db of
-               Just row_num -> insertRow buddy s row_num row
-               Nothing      -> putStrLn $ "## bad id : " ++ show row_id
-           | (row_id,row) <- HashMap.toList tab
-           ]
---  assignEntry buddy ["0","hack"] (Aeson.Number 99) INTEGER Nothing
---  assignEntry buddy ["0","hack"] (Aeson.Number 99) INTEGER Nothing
---  assignEntry buddy ["0","Children","1","Children","0","Children","0","'User Settings'","Tags","artist","Value"] (Aeson.String "Hello") STRING (Just "Tag")
+  print tab
+  foldM_ (\ db (row_id,row) -> do
+  	     case HashMap.lookup row_id db of
+               Just row_num -> do insertRow buddy s row_num row
+	       	    	          return db
+               Nothing      -> do let row_num = HashMap.size db
+	       		       	  let s' = s { schema = [ if name c == "id"
+				      	       	      	  then c { conv = RW }
+							  else c
+							| c <- schema s ] }
+	       		          putStrLn $ "## new id : " ++ show (row_id, row_num)
+	       		       	  insertRow buddy s' row_num (HashMap.insert "id" (Aeson.String row_id) row :: HashMap.HashMap Text Value)
+	       		          return $ HashMap.insert row_id row_num db
+         ) db (HashMap.toList tab)
   buddy "Save"
   buddy "Exit"
   return ()
@@ -168,6 +176,7 @@ plistBuddy fileName = do
 
 insertRow :: (String -> IO String) -> Schema -> Int -> Row -> IO ()
 insertRow buddy s n row = do
+        print (s,n,row)
         -- Now, go over each of the 
         sequence [ case HashMap.lookup (name col) row of
                      Nothing -> return () -- no update included
